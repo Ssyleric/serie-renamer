@@ -4,7 +4,7 @@
 base_dir="/volume2/serie"
 
 # Clé API TMDb
-api_key="xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+api_key="a51e6780dac618cdc12b6e54f2771b45"
 
 # Variables pour le rapport final
 total_folders=0
@@ -24,12 +24,14 @@ get_tmdb_info() {
 
     # Rechercher la série
     result=$(curl -s --get "https://api.themoviedb.org/3/search/tv" --data-urlencode "api_key=$api_key" --data-urlencode "query=$series_name")
-    series_id=$(echo "$result" | jq -r '.results[0].id')
-    tmdb_title=$(echo "$result" | jq -r '.results[0].name')
 
-    if [[ "$series_id" =~ ^[0-9]+$ ]]; then
+    series_id=$(echo "$result" | jq -r '.results[0].id // "null"')
+    tmdb_title=$(echo "$result" | jq -r '.results[0].name // "null"')
+
+    if [[ "$series_id" =~ ^[0-9]+$ && "$tmdb_title" != "null" ]]; then
         echo "✅ Série trouvée : $tmdb_title (ID: $series_id)" >&2
-        airdate_year=$(curl -s "https://api.themoviedb.org/3/tv/$series_id?api_key=$api_key" | jq -r '.first_air_date' | cut -d'-' -f1)
+
+        airdate_year=$(curl -s "https://api.themoviedb.org/3/tv/$series_id?api_key=$api_key" | jq -r '.first_air_date // "0000-00-00"' | cut -d'-' -f1)
 
         if [[ ! "$airdate_year" =~ ^[0-9]{4}$ ]]; then
             airdate_year="Inconnu"
@@ -41,11 +43,6 @@ get_tmdb_info() {
 
     echo "❌ Série non trouvée sur TMDb." >&2
     echo "Inconnu|Inconnu"
-}
-
-# Fonction pour normaliser les noms
-normalize_series_name() {
-    echo "$1" | sed -E 's/Marvel.s //I' | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g'
 }
 
 # Dictionnaire pour stocker les séries et éviter les doublons
@@ -68,21 +65,26 @@ find "$base_dir" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r folder_pat
     if [[ "$folder" =~ \(Recherche ]]; then
         series_name=$(echo "$folder" | sed -E 's/ \(Recherche.*//')
         current_year="Inconnu"
-    else
+    elif [[ "$folder" =~ \(([0-9]{4})\)$ ]]; then
         series_name=$(echo "$folder" | sed -E 's/ \([0-9]{4}\)//')
-    fi
-
-    if [[ "$folder" =~ \(([0-9]{4})\) ]]; then
         current_year="${BASH_REMATCH[1]}"
     else
+        series_name="$folder"
         current_year="Inconnu"
     fi
+
+    # Suppression des espaces en trop
+    series_name=$(echo "$series_name" | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+
+    echo "📌 Nom extrait : $series_name"
     echo "📌 Année actuelle du répertoire : $current_year"
 
     # Récupérer le nom officiel et l'année depuis TMDb
     tmdb_data=$(get_tmdb_info "$series_name")
     tmdb_name=$(echo "$tmdb_data" | cut -d'|' -f1)
     tmdb_year=$(echo "$tmdb_data" | cut -d'|' -f2)
+
+    echo "🔍 TMDb info récupérée : $tmdb_name ($tmdb_year)"
 
     if [[ "$tmdb_name" == "Inconnu" ]]; then
         echo "⚠️ Impossible de trouver '$series_name' sur TMDb. Vérification manuelle requise."
@@ -95,15 +97,24 @@ find "$base_dir" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r folder_pat
     new_folder_name="${tmdb_name} (${tmdb_year})"
     new_folder_path="$base_dir/$new_folder_name"
 
-    # Renommage si nécessaire
+    echo "📝 Nouveau nom de dossier attendu : $new_folder_name"
+
+    # Vérification avant renommage
     if [[ "$new_folder_name" != "$folder" ]]; then
-        echo "🔄 Renommage : '$folder' -> '$new_folder_name'"
-        mv "$folder_path" "$new_folder_path"
-        ((renamed_folders++))
+        if [[ -d "$new_folder_path" ]]; then
+            echo "⚠️  Dossier cible '$new_folder_name' existe déjà, fusion en cours."
+            mv "$folder_path"/* "$new_folder_path" 2>/dev/null
+            rmdir "$folder_path" 2>/dev/null && echo "🗑️ Dossier supprimé : $folder_path"
+            ((merged_folders++))
+        else
+            echo "🚀 Renommage en cours : '$folder_path' -> '$new_folder_path'"
+            mv "$folder_path" "$new_folder_path"
+            ((renamed_folders++))
+        fi
     fi
 
     # Vérification des doublons
-    normalized_name=$(normalize_series_name "$tmdb_name")
+    normalized_name=$(echo "$tmdb_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]//g')
     if [[ -n "${series_map[$normalized_name]}" ]]; then
         target_folder="${series_map[$normalized_name]}"
         echo "🔄 Fusion de '$new_folder_name' -> '$target_folder'"
