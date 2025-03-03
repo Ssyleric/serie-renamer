@@ -4,7 +4,7 @@
 base_dir="/volume2/serie"
 
 # Clé API TMDb
-api_key="a51e6780dac618cdc12b6e54f2771b45"
+api_key="XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXxx"
 
 # Variables pour le rapport final
 total_folders=0
